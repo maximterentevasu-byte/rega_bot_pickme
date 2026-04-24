@@ -23,8 +23,9 @@ const TEXT = {
   cancelConfirm: 'Вы точно хотите отказаться от участия?',
   notRegistered: 'Вы не зарегистрированы',
   removed: 'Ваша заявка на участие отозвана',
-  shareContact: 'Нажмите кнопку ниже, чтобы отправить контакт.',
+  shareContact: 'Нажмите кнопку ниже, чтобы отправить контакт. В список будет записан ваш Telegram username.',
   wrongContact: 'Пожалуйста, отправьте свой контакт через кнопку ниже.',
+  noUsername: 'У вас не задан Telegram username. Добавьте username в настройках Telegram и попробуйте снова.',
   emptyList: 'Пока нет зарегистрированных участников.',
 };
 
@@ -73,12 +74,13 @@ async function writeParticipants(participants) {
   await fs.writeFile(DATA_FILE, JSON.stringify(participants, null, 2), 'utf8');
 }
 
-function getContactUserId(ctx) {
-  const contact = ctx.message?.contact;
-  if (!contact) return null;
+function getUsername(ctx) {
+  const username = ctx.from?.username;
+  return username ? username.toLowerCase() : null;
+}
 
-  // Telegram отдает user_id только если пользователь делится своим контактом.
-  return contact.user_id || ctx.from?.id || null;
+function formatUsername(username) {
+  return username ? `@${username}` : 'без username';
 }
 
 async function showMainMenu(ctx, text = TEXT.welcome) {
@@ -108,7 +110,7 @@ bot.hears('Список участников', async (ctx) => {
   }
 
   const list = participants
-    .map((participant, index) => `${index + 1}. ID: ${participant.id}`)
+    .map((participant, index) => `${index + 1}. ${formatUsername(participant.username)}`)
     .join('\n');
 
   await ctx.reply(`Список участников:\n\n${list}`, mainMenu());
@@ -140,23 +142,25 @@ bot.hears('Да', async (ctx) => {
 
 bot.on('contact', async (ctx) => {
   const state = userState.get(ctx.from.id);
-  const contactUserId = getContactUserId(ctx);
-
-  if (!state || !contactUserId) {
+  if (!state) {
     await ctx.reply(TEXT.wrongContact, contactMenu());
     return;
   }
 
-  const id = String(contactUserId);
+  const username = getUsername(ctx);
+  if (!username) {
+    await showMainMenu(ctx, TEXT.noUsername);
+    return;
+  }
+
   const participants = await readParticipants();
 
   if (state === 'register_wait_contact') {
-    const exists = participants.some((participant) => participant.id === id);
+    const exists = participants.some((participant) => participant.username === username);
 
     if (!exists) {
       participants.push({
-        id,
-        username: ctx.from.username || null,
+        username,
         firstName: ctx.from.first_name || null,
         registeredAt: new Date().toISOString(),
       });
@@ -168,7 +172,7 @@ bot.on('contact', async (ctx) => {
   }
 
   if (state === 'cancel_wait_contact') {
-    const index = participants.findIndex((participant) => participant.id === id);
+    const index = participants.findIndex((participant) => participant.username === username);
 
     if (index === -1) {
       await showMainMenu(ctx, TEXT.notRegistered);
