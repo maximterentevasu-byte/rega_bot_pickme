@@ -1,108 +1,207 @@
-require('dotenv').config();
-const TelegramBot = require('node-telegram-bot-api');
-const fs = require('fs');
+import 'dotenv/config';
+import { Telegraf, Markup } from 'telegraf';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
-const token = process.env.BOT_TOKEN;
-const bot = new TelegramBot(token, { polling: true });
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const DATA_FILE = process.env.DATA_FILE || './data/participants.json';
 
-const DATA_FILE = process.env.DATA_FILE || './participants.json';
-
-function readData() {
-  if (!fs.existsSync(DATA_FILE)) return [];
-  return JSON.parse(fs.readFileSync(DATA_FILE));
+if (!BOT_TOKEN) {
+  console.error('Ошибка: не задан BOT_TOKEN. Добавьте его в .env или Railway Variables.');
+  process.exit(1);
 }
 
-function writeData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+const bot = new Telegraf(BOT_TOKEN);
+const userState = new Map();
 
-const mainMenu = {
-  reply_markup: {
-    keyboard: [
-      ['Зарегистрироваться'],
-      ['Список участников'],
-      ['Отказаться от участия'],
-      ['Правила проведения ивента']
-    ],
-    resize_keyboard: true
-  }
+const TEXT = {
+  welcome:
+    'Привет! Это бот Pick me. Открыта регистрация на дегустацию Кисляка 01.05.26. Обязательно ознакомься с правилами мероприятия.',
+  registered: 'Регистрация прошла успешно!',
+  alreadyRegistered: 'Вы уже зарегистрированы.',
+  rules: 'Правила ивента будут чуть позже',
+  cancelConfirm: 'Вы точно хотите отказаться от участия?',
+  notRegistered: 'Вы не зарегистрированы',
+  removed: 'Ваша заявка на участие отозвана',
+  shareContact: 'Нажмите кнопку ниже, чтобы отправить контакт. В список будет записан ваш Telegram username.',
+  wrongContact: 'Пожалуйста, отправьте свой контакт через кнопку ниже.',
+  noUsername: 'У вас не задан Telegram username. Добавьте username в настройках Telegram и попробуйте снова.',
+  emptyList: 'Пока нет зарегистрированных участников.',
 };
 
-bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id,
-    "Привет! Это бот Pick me. Открыта регистрация на дегустацию Кисляка 01.05.26. Обязательно ознакомься с правилами мероприятия.",
-    mainMenu
-  );
+function mainMenu() {
+  return Markup.keyboard([
+    ['Зарегистрироваться'],
+    ['Список участников'],
+    ['Отказаться от участия'],
+    ['Правила проведения ивента'],
+  ]).resize();
+}
+
+function contactMenu() {
+  return Markup.keyboard([
+    [Markup.button.contactRequest('Отправить контакт')],
+    ['Главное меню'],
+  ]).resize();
+}
+
+function yesNoMenu() {
+  return Markup.keyboard([['Да', 'Нет'], ['Главное меню']]).resize();
+}
+
+async function ensureDataFile() {
+  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
+  try {
+    await fs.access(DATA_FILE);
+  } catch {
+    await fs.writeFile(DATA_FILE, JSON.stringify([], null, 2), 'utf8');
+  }
+}
+
+async function readParticipants() {
+  await ensureDataFile();
+  const raw = await fs.readFile(DATA_FILE, 'utf8');
+  try {
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeParticipants(participants) {
+  await ensureDataFile();
+  await fs.writeFile(DATA_FILE, JSON.stringify(participants, null, 2), 'utf8');
+}
+
+function getUsername(ctx) {
+  const username = ctx.from?.username;
+  return username ? username.toLowerCase() : null;
+}
+
+function formatUsername(username) {
+  return username ? `@${username}` : 'без username';
+}
+
+async function showMainMenu(ctx, text = TEXT.welcome) {
+  userState.delete(ctx.from.id);
+  await ctx.reply(text, mainMenu());
+}
+
+bot.start(async (ctx) => {
+  await showMainMenu(ctx);
 });
 
-bot.on('message', (msg) => {
-  const text = msg.text;
-  const username = msg.from.username;
+bot.hears('Главное меню', async (ctx) => {
+  await showMainMenu(ctx);
+});
 
-  if (text === 'Зарегистрироваться') {
-    if (!username) {
-      return bot.sendMessage(msg.chat.id, 'У тебя нет username в Telegram');
-    }
+bot.hears('Зарегистрироваться', async (ctx) => {
+  userState.set(ctx.from.id, 'register_wait_contact');
+  await ctx.reply(TEXT.shareContact, contactMenu());
+});
 
-    const data = readData();
-    if (data.includes(username)) {
-      return bot.sendMessage(msg.chat.id, 'Ты уже зарегистрирован');
-    }
+bot.hears('Список участников', async (ctx) => {
+  const participants = await readParticipants();
 
-    data.push(username);
-    writeData(data);
-
-    bot.sendMessage(msg.chat.id, 'Регистрация прошла успешно!', mainMenu);
+  if (participants.length === 0) {
+    await ctx.reply(TEXT.emptyList, mainMenu());
+    return;
   }
 
-  if (text === 'Список участников') {
-    const data = readData();
-    if (data.length === 0) {
-      return bot.sendMessage(msg.chat.id, 'Список пуст', mainMenu);
+  const list = participants
+    .map((participant, index) => `${index + 1}. ${formatUsername(participant.username)}`)
+    .join('\n');
+
+  await ctx.reply(`Список участников:\n\n${list}`, mainMenu());
+});
+
+bot.hears('Отказаться от участия', async (ctx) => {
+  userState.set(ctx.from.id, 'cancel_confirm');
+  await ctx.reply(TEXT.cancelConfirm, yesNoMenu());
+});
+
+bot.hears('Правила проведения ивента', async (ctx) => {
+  await ctx.reply(TEXT.rules, mainMenu());
+});
+
+bot.hears('Нет', async (ctx) => {
+  const state = userState.get(ctx.from.id);
+  if (state === 'cancel_confirm') {
+    await showMainMenu(ctx, 'Отмена отказа от участия.');
+  }
+});
+
+bot.hears('Да', async (ctx) => {
+  const state = userState.get(ctx.from.id);
+  if (state !== 'cancel_confirm') return;
+
+  userState.set(ctx.from.id, 'cancel_wait_contact');
+  await ctx.reply(TEXT.shareContact, contactMenu());
+});
+
+bot.on('contact', async (ctx) => {
+  const state = userState.get(ctx.from.id);
+  if (!state) {
+    await ctx.reply(TEXT.wrongContact, contactMenu());
+    return;
+  }
+
+  const username = getUsername(ctx);
+  if (!username) {
+    await showMainMenu(ctx, TEXT.noUsername);
+    return;
+  }
+
+  const participants = await readParticipants();
+
+  if (state === 'register_wait_contact') {
+    const exists = participants.some((participant) => participant.username === username);
+
+    if (!exists) {
+      participants.push({
+        username,
+        firstName: ctx.from.first_name || null,
+        registeredAt: new Date().toISOString(),
+      });
+      await writeParticipants(participants);
     }
 
-    const list = data.map((u, i) => `${i + 1}. @${u}`).join('\n');
-    bot.sendMessage(msg.chat.id, list, mainMenu);
+    await showMainMenu(ctx, exists ? TEXT.alreadyRegistered : TEXT.registered);
+    return;
   }
 
-  if (text === 'Отказаться от участия') {
-    bot.sendMessage(msg.chat.id, 'Вы точно хотите отказаться?', {
-      reply_markup: {
-        keyboard: [['Да', 'Нет']],
-        resize_keyboard: true
-      }
-    });
-  }
-
-  if (text === 'Да') {
-    const data = readData();
-    const index = data.indexOf(username);
+  if (state === 'cancel_wait_contact') {
+    const index = participants.findIndex((participant) => participant.username === username);
 
     if (index === -1) {
-      return bot.sendMessage(msg.chat.id, 'Вы не зарегистрированы', mainMenu);
+      await showMainMenu(ctx, TEXT.notRegistered);
+      return;
     }
 
-    data.splice(index, 1);
-    writeData(data);
-
-    bot.sendMessage(msg.chat.id, 'Ваша заявка на участие отозвана', mainMenu);
-  }
-
-  if (text === 'Нет') {
-    bot.sendMessage(msg.chat.id, 'Ок', mainMenu);
-  }
-
-  if (text === 'Правила проведения ивента') {
-    bot.sendMessage(msg.chat.id, `Правила проведения ивента:
-
-1. Порядок участия будет определяться порядковым номером регистрации в боте.
-2. В официальной части дегустации будет принимать участие 25 человек.
-3. Если по какой-либо причине участник будет отсутствовать, то его заменит следующий по счёту человек.
-4. Даже если вы не будете участвовать в официальной части, то не спешите расстраиваться, ведь вы всё равно получите свою сладость.
-5. Если у вас не получится принять участие, то не грустите, ведь у нас будет ещё много интересных мероприятий.
-
-‼️ Напоминаем ‼️
-Дата проведения: 01.05.26
-Место проведения: Каменск-Уральский, Каменская 79`, mainMenu);
+    participants.splice(index, 1);
+    await writeParticipants(participants);
+    await showMainMenu(ctx, TEXT.removed);
   }
 });
+
+bot.on('text', async (ctx) => {
+  const state = userState.get(ctx.from.id);
+
+  if (state === 'register_wait_contact' || state === 'cancel_wait_contact') {
+    await ctx.reply(TEXT.wrongContact, contactMenu());
+    return;
+  }
+
+  await showMainMenu(ctx, 'Выберите действие в главном меню.');
+});
+
+bot.catch((error, ctx) => {
+  console.error(`Ошибка при обработке update ${ctx.update.update_id}:`, error);
+});
+
+bot.launch();
+console.log('Pick me bot запущен');
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));

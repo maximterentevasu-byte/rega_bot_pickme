@@ -1,9 +1,67 @@
-# PickMe Telegram Bot
+# Pick me Telegram Bot
 
-## Railway Variables
-- BOT_TOKEN=your_token
-- DATA_FILE=./participants.json
+Бот для регистрации участников на дегустацию Кисляка 01.05.26.
 
-## Run
+## Что умеет
+
+- `/start` показывает приветствие и главное меню.
+- `Зарегистрироваться` запрашивает контакт, сохраняет Telegram username участника по порядку.
+- `Список участников` выводит список от 1 до N.
+- `Отказаться от участия` запрашивает подтверждение, потом контакт и удаляет участника по username.
+- `Правила проведения ивента` пока выводит заглушку.
+
+## Локальный запуск
+
+1. Установи Node.js 18+.
+2. Установи зависимости:
+
+```bash
 npm install
-node index.js
+```
+
+3. Создай файл `.env` на основе `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+4. Вставь токен бота от BotFather:
+
+```env
+BOT_TOKEN=твой_токен
+DATA_FILE=./data/participants.json
+```
+
+5. Запусти:
+
+```bash
+npm start
+```
+
+## Деплой на Railway через GitHub
+
+1. Создай бота в Telegram через `@BotFather` и получи `BOT_TOKEN`.
+2. Создай новый репозиторий на GitHub.
+3. Загрузи файлы проекта в репозиторий.
+4. Открой Railway → `New Project` → `Deploy from GitHub repo`.
+5. Выбери репозиторий с ботом.
+6. В Railway открой сервис → вкладка `Variables` → добавь:
+
+```env
+BOT_TOKEN=твой_токен_бота
+DATA_FILE=/data/participants.json
+```
+
+7. Для постоянного хранения участников добавь Railway Volume и примонтируй его в `/data`.
+8. Нажми `Deploy` или дождись автодеплоя после push в GitHub.
+
+## Важно про хранение данных
+
+По умолчанию участники хранятся в JSON-файле. Для Railway лучше использовать Volume с путем `/data`, иначе файл может потеряться после redeploy/restart.
+
+
+## Версия username
+
+В этой версии бот записывает в список не Telegram ID, а username пользователя в формате `@username`.
+
+Важно: если у пользователя не задан username в Telegram, бот попросит добавить username в настройках Telegram и попробовать снова.
