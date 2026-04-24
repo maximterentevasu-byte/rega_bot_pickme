@@ -1,18 +1,9 @@
 {
-  "name": "pickme-telegram-bot",
+  "name": "pickme-bot",
   "version": "1.0.0",
-  "description": "Telegram bot Pick me for event registration",
-  "main": "src/index.js",
-  "type": "module",
-  "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
+  "main": "index.js",
   "dependencies": {
-    "dotenv": "^16.4.7",
-    "telegraf": "^4.16.3"
+    "node-telegram-bot-api": "^0.61.0",
+    "dotenv": "^16.0.0"
   }
 }
